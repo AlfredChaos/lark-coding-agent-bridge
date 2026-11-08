@@ -89,6 +89,14 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
       };
     }
 
+    case 'tool_update': {
+      const blocks = state.blocks.map((b) => {
+        if (b.kind !== 'tool' || b.tool.id !== evt.id) return b;
+        return { ...b, tool: { ...b.tool, output: evt.output } };
+      });
+      return { ...state, blocks };
+    }
+
     case 'tool_result': {
       const blocks = state.blocks.map((b) => {
         if (b.kind !== 'tool' || b.tool.id !== evt.id) return b;

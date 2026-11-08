@@ -574,3 +574,44 @@ describe('profile schema', () => {
     });
   });
 });
+
+describe('OMP profile schema', () => {
+  it('requires omp configuration for an omp profile', () => {
+    expect(() =>
+      normalizeProfileConfig({ schemaVersion: 2, agentKind: 'omp', accounts: { app } }),
+    ).toThrow(/omp profile requires omp configuration/);
+  });
+
+  it('normalizes the omp binary, model, thinking level and tool allowlist', () => {
+    const cfg = createDefaultProfileConfig({
+      agentKind: 'omp',
+      accounts: { app },
+      omp: {
+        binaryPath: ' /Users/me/.local/bin/omp ',
+        model: ' opencode-go/deepseek-v4.1-flash ',
+        thinking: 'max',
+        tools: [' bash ', 'read', 'bash', ''],
+      },
+    });
+
+    expect(cfg.agentKind).toBe('omp');
+    expect(cfg.omp).toEqual({
+      binaryPath: '/Users/me/.local/bin/omp',
+      model: 'opencode-go/deepseek-v4.1-flash',
+      thinking: 'max',
+      tools: ['bash', 'read'],
+    });
+    expect(cfg.codex).toBeUndefined();
+  });
+
+  it('rejects an unknown omp thinking level instead of silently dropping it', () => {
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 2,
+        agentKind: 'omp',
+        accounts: { app },
+        omp: { binaryPath: 'omp', thinking: 'turbo' },
+      }),
+    ).toThrow(/omp\.thinking must be one of/);
+  });
+});

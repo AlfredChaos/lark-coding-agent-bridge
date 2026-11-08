@@ -14,6 +14,7 @@ export interface BootstrapProfileInput {
   workspace?: string;
   defaultWorkspace?: string;
   codexBinaryPath?: string;
+  ompBinaryPath?: string;
   profileDir?: string;
 }
 
@@ -29,12 +30,17 @@ export async function createBootstrapProfileConfig(
     input.agentKind === 'codex'
       ? await createBootstrapCodexConfig(input.codexBinaryPath)
       : undefined;
+  const omp =
+    input.agentKind === 'omp'
+      ? await createBootstrapOmpConfig(input.ompBinaryPath)
+      : undefined;
   const profile = createDefaultProfileConfig({
     agentKind: input.agentKind,
     accounts: input.accounts,
     preferences: input.preferences,
     secrets: input.secrets,
     ...(codex ? { codex } : {}),
+    ...(omp ? { omp } : {}),
   });
   if (workspace) {
     profile.workspaces = {
@@ -60,25 +66,44 @@ async function ensureManagedDefaultWorkspace(path: string): Promise<string> {
 }
 
 export async function createBootstrapCodexConfig(binaryPath: string | undefined) {
-  const command = binaryPath ?? process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex';
+  return resolveAgentBinary({
+    command: binaryPath ?? process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex',
+    agentId: 'codex',
+    agentName: 'Codex CLI',
+  });
+}
+
+export async function createBootstrapOmpConfig(binaryPath: string | undefined): Promise<{ binaryPath: string }> {
+  return resolveAgentBinary({
+    command: binaryPath ?? process.env.LARK_CHANNEL_OMP_BIN ?? 'omp',
+    agentId: 'omp',
+    agentName: 'Oh My Pi',
+  });
+}
+
+async function resolveAgentBinary(input: {
+  command: string;
+  agentId: 'codex' | 'omp';
+  agentName: string;
+}): Promise<{ binaryPath: string }> {
   let resolvedBinary: string;
   try {
-    resolvedBinary = await resolveExecutablePath(command);
+    resolvedBinary = await resolveExecutablePath(input.command);
   } catch (err) {
     const errno = (err as NodeJS.ErrnoException).code;
     throw new AgentPreflightError({
-      code: codexBootstrapBinaryErrorCode(errno),
-      agentId: 'codex',
-      agentName: 'Codex CLI',
-      command,
-      binaryPath: command,
+      code: bootstrapBinaryErrorCode(errno),
+      agentId: input.agentId,
+      agentName: input.agentName,
+      command: input.command,
+      binaryPath: input.command,
       errno,
     });
   }
   return { binaryPath: resolvedBinary };
 }
 
-function codexBootstrapBinaryErrorCode(errno: string | undefined) {
+function bootstrapBinaryErrorCode(errno: string | undefined) {
   if (errno === 'EACCES' || errno === 'EPERM') return 'agent-binary-not-executable';
   if (errno === 'ELOOP' || errno === 'ENOTDIR' || errno === 'EINVAL') {
     return 'agent-binary-resolve-failed';

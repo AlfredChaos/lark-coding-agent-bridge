@@ -38,3 +38,37 @@ describe('run state terminal event schema', () => {
     ).toBe('idle_timeout');
   });
 });
+
+describe('run state tool streaming', () => {
+  it('renders partial tool output without finishing the tool', () => {
+    const running = reduce(initialState, {
+      type: 'tool_use',
+      id: 'call-1',
+      name: 'bash',
+      input: { command: 'echo hi' },
+    });
+    const updated = reduce(running, { type: 'tool_update', id: 'call-1', output: 'hi\n' });
+
+    expect(updated.blocks).toEqual([
+      {
+        kind: 'tool',
+        tool: {
+          id: 'call-1',
+          name: 'bash',
+          input: { command: 'echo hi' },
+          status: 'running',
+          output: 'hi\n',
+        },
+      },
+    ]);
+    expect(updated.footer).toBe('tool_running');
+
+    const done = reduce(updated, {
+      type: 'tool_result',
+      id: 'call-1',
+      output: 'hi\n',
+      isError: false,
+    });
+    expect(done.blocks[0]).toMatchObject({ tool: { status: 'done', output: 'hi\n' } });
+  });
+});

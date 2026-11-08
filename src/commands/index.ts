@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
-import { claudeCapability, codexCapability } from '../agent/capability';
+import { capabilityFor, usesSessionId } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -153,7 +153,7 @@ type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
 interface ResumeCandidate {
   scopeId: string;
-  agentId: 'claude' | 'codex';
+  agentId: SessionCatalogIdentity['agentId'];
   cwdRealpath: string;
   policyFingerprint: string;
   sessionId?: string;
@@ -557,7 +557,8 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'codex') {
+  const capability = capabilityFor(ctx.controls.profileConfig);
+  if (!usesSessionId(capability)) {
     const identity = ctx.sessionCatalogIdentity;
     const entry =
       ctx.sessionCatalog && identity
@@ -592,6 +593,27 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
+  if (capability.agentId === 'omp') {
+    const identity = ctx.sessionCatalogIdentity;
+    const entry =
+      ctx.sessionCatalog && identity
+        ? ctx.sessionCatalog.activeFor(identity)
+        : undefined;
+    if (entry?.sessionId && identity) {
+      const nonce = issueResumeCandidate(identity, { sessionId: entry.sessionId });
+      await reply(
+        ctx,
+        `当前 OMP 会话可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`,
+      );
+      return;
+    }
+    // OMP session files are not scanned by the bridge; only the active
+    // catalog entry is resumable.
+    const card = resumeCard(cwd, []);
+    await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+    return;
+  }
+
   const sessions = await listClaudeResumeHistory(ctx, cwd, limit);
   const currentSession = ctx.sessions.getRaw(ctx.scope);
   const identity = ctx.sessionCatalogIdentity;
@@ -615,7 +637,8 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     const resolved = consumeResumeCandidate(sessionId, ctx.sessionCatalogIdentity);
     if (resolved) {
       ctx.activeRuns.interrupt(ctx.scope);
-      if (ctx.sessionCatalogIdentity.agentId === 'codex') {
+      const agentId = ctx.sessionCatalogIdentity.agentId;
+      if (agentId === 'codex') {
         ctx.sessionCatalog.upsertActive({
           scopeId: ctx.sessionCatalogIdentity.scopeId,
           agentId: 'codex',
@@ -626,7 +649,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       } else {
         ctx.sessionCatalog.upsertActive({
           scopeId: ctx.sessionCatalogIdentity.scopeId,
-          agentId: 'claude',
+          agentId,
           cwdRealpath: ctx.sessionCatalogIdentity.cwdRealpath,
           policyFingerprint: ctx.sessionCatalogIdentity.policyFingerprint,
           sessionId: resolved.sessionId!,
@@ -646,14 +669,12 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       return;
     }
     ctx.activeRuns.interrupt(ctx.scope);
-    if (ctx.sessionCatalogIdentity.agentId === 'claude') {
-      ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
-    }
+    ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
     await reply(ctx, RESUME_APPLIED_REPLY);
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'codex') {
+  if (!usesSessionId(capabilityFor(ctx.controls.profileConfig))) {
     await reply(ctx, '当前上下文没有可恢复的 Codex thread，请先在当前工作区完成一次运行。');
     return;
   }
@@ -699,7 +720,7 @@ function consumeResumeCandidate(
     candidate.agentId !== identity.agentId ||
     candidate.cwdRealpath !== identity.cwdRealpath ||
     candidate.policyFingerprint !== identity.policyFingerprint ||
-    (identity.agentId === 'claude' && !candidate.sessionId) ||
+    (identity.agentId !== 'codex' && !candidate.sessionId) ||
     (identity.agentId === 'codex' && !candidate.threadId)
   ) {
     return undefined;
@@ -769,6 +790,12 @@ function runtimeAccessStatus(
         profileConfig.permissions.defaultAccess,
         profileConfig.permissions,
       ),
+    };
+  }
+  if (profileConfig.agentKind === 'omp') {
+    return {
+      label: 'access',
+      value: `${profileConfig.permissions.defaultAccess}/${profileConfig.permissions.maxAccess}`,
     };
   }
   return {
@@ -1127,10 +1154,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
   doctorLastByOperator.set(rateKey, now);
 
-  const capability =
-    ctx.controls.profileConfig.agentKind === 'codex'
-      ? codexCapability(ctx.controls.profileConfig)
-      : claudeCapability(ctx.controls.profileConfig);
+  const capability = capabilityFor(ctx.controls.profileConfig);
   const policy = evaluateRunPolicy({
     scope: {
       source: 'im',

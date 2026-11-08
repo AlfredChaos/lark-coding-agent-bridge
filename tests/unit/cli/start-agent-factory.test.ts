@@ -69,6 +69,30 @@ describe('start runtime agent factory', () => {
     expect(profile.codex?.binaryPath).toBe('codex');
   });
 
+  it('creates an OmpAdapter from the omp profile block', () => {
+    const agent = createRuntimeAgent(
+      createDefaultProfileConfig({
+        agentKind: 'omp',
+        accounts: appAccount(),
+        omp: { binaryPath: '/opt/omp', model: 'test/model', thinking: 'low', tools: ['bash'] },
+      }),
+      { profileDir: '/tmp/lark-channel-bridge/profiles/omp-e2e' },
+    );
+
+    expect(agent.id).toBe('omp');
+    expect(agent.displayName).toBe('Oh My Pi');
+  });
+
+  it('seeds a default OMP binary when bootstrapping a new OMP profile', () => {
+    const profile = createRuntimeProfileConfig({
+      agentKind: 'omp',
+      accounts: appAccount(),
+    });
+
+    expect(profile.omp?.binaryPath).toBe(process.env.LARK_CHANNEL_OMP_BIN ?? 'omp');
+    expect(profile.codex).toBeUndefined();
+  });
+
   it('updates the process registry before releasing the old app lock during reconnect', async () => {
     // Reconnect ordering now lives in the supervisor's ManagedProfile.restart().
     const source = await readFile(join(process.cwd(), 'src/runtime/supervisor.ts'), 'utf8');

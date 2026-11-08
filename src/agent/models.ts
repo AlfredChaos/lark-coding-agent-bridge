@@ -43,9 +43,20 @@ const CODEX_MODELS: ModelOption[] = [
   { value: 'o3', label: 'o3' },
 ];
 
+/**
+ * OMP's model catalog depends on the account's configured providers, so the
+ * bridge cannot enumerate it. The model is set per profile via `omp.model`
+ * (forwarded to `omp --model`) and this picker only clears the preference.
+ */
+const OMP_MODELS: ModelOption[] = [
+  { value: DEFAULT_MODEL, label: '跟随 omp 配置（omp.model）' },
+];
+
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
-  return agentKind === 'codex' ? CODEX_MODELS : CLAUDE_MODELS;
+  if (agentKind === 'codex') return CODEX_MODELS;
+  if (agentKind === 'omp') return OMP_MODELS;
+  return CLAUDE_MODELS;
 }
 
 /** True when the selection means "use the agent default" (no `--model`). */
