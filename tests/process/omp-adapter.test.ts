@@ -140,6 +140,58 @@ describe('OmpAdapter process contract', () => {
     });
   });
 
+  it('sends accepted image files as RPC ImageContent entries', async () => {
+    const fake = await createFakeOmp({
+      afterPrompt: [
+        { type: 'agent_end', messages: [{ role: 'assistant', stopReason: 'stop' }], isTerminal: true },
+      ],
+    });
+    cleanup.push(fake.dir);
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const imagePath = join(fake.dir, 'shot.png');
+    await writeFile(imagePath, png);
+
+    const run = new OmpAdapter({ binary: fake.path, sessionDir: fake.sessionDir }).run({
+      runId: 'run-images',
+      prompt: 'what color is this',
+      cwd: await realpath(fake.dir),
+      images: [imagePath],
+    });
+
+    expect(await collect(run.events)).toEqual([
+      { type: 'system', sessionId: 'sess-1', model: 'test/model-1' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    const record = await readRecord(fake.recordPath);
+    const prompt = record.commands.find((command) => command.type === 'prompt');
+    expect(prompt?.images).toEqual([
+      { type: 'image', mimeType: 'image/png', data: png.toString('base64') },
+    ]);
+  });
+
+  it('omits the images field when a run carries no images', async () => {
+    const fake = await createFakeOmp({
+      afterPrompt: [
+        { type: 'agent_end', messages: [{ role: 'assistant', stopReason: 'stop' }], isTerminal: true },
+      ],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new OmpAdapter({ binary: fake.path, sessionDir: fake.sessionDir }).run({
+      runId: 'run-no-images',
+      prompt: 'plain text',
+      cwd: await realpath(fake.dir),
+    });
+
+    await collect(run.events);
+    const record = await readRecord(fake.recordPath);
+    const prompt = record.commands.find((command) => command.type === 'prompt');
+    expect(prompt).not.toHaveProperty('images');
+  });
+
   it('resumes the stored session id through --resume and emits the get_state system frame', async () => {
     const fake = await createFakeOmp({
       afterPrompt: [

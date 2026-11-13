@@ -154,12 +154,29 @@ OMP 没有操作系统级沙箱，审批模式是唯一闸门。桥把 Claude �
 
 会话文件放在 `<profileDir>/omp-sessions`。这样多个 profile 的 OMP 会话互不干扰。
 
+## 图片附件
+
+飞书里发给机器人的图片会随 `prompt` 帧的 `images` 字段传给 OMP：
+
+```text
+{ id, type: "prompt", message, images: [{ type: "image", mimeType, data }] }
+```
+
+`data` 是 base64。桥把下载到 `media/` 的文件读出来编码，路径仍然出现在 prompt 的 `<user_input>.attachments` 里。
+
+传输预算：OMP 的 `maxFrameBytes` 是 1 MiB，且服务端不重组入站分片，所以单帧必须自己控制。桥给整轮图片留 720 KiB 的 base64 预算（`OMP_IMAGE_BUDGET_BYTES`），超出预算的图片不会发送——它仍然以本地路径留在 prompt 里，模型可以用 `read` 工具自己打开。所以这种情况不算丢图，只是多一轮工具调用。
+
+同样的原因，桥不做图片缩放：没有内置图像处理依赖，也没有跨平台的等比压缩路径。想省带宽就在飞书侧压缩，或者接受超出预算的图走 `read` 路径。
+
+支持的扩展名：`png`、`jpg`、`jpeg`、`webp`、`gif`、`heic`。其它扩展名跳过并记 `omp-image-skipped` 日志。
+
+图片最终能不能被理解取决于模型：给 `omp.model` 配纯文本模型时，OMP 会用视觉模型转成描述再注入。
+
 ## 已知限制
 
-- 不协商 RPC v2。单行超过 1 MiB 的帧由 OMP 压缩或替换，超大工具输出可能丢失。正文增量不受影响。
+- 不协商 RPC v2。出站单行超过 1 MiB 时 OMP 会拆分或省略字段，超大工具输出可能丢失（正文增量不受影响）；入站帧不分片重组，因此桥自己控制图片预算。
 - 不注册 host tools 和 host URI scheme。收到这类请求时回错误，让调用方失败而不是挂起。
 - 不支持 OMP 的交互式登录流程。OMP 的 provider 认证要先在终端完成。
-- 图片附件不传给 OMP。图片参数转换未接入。
 - OMP 的历史会话不参与 `/resume` 列表。
 - 群聊、评论、会议都复用同一适配器；行为与 Claude 路径一致，没有 OMP 专属卡片。
 
@@ -169,7 +186,7 @@ OMP 没有操作系统级沙箱，审批模式是唯一闸门。桥把 Claude �
 
 ```bash
 # 协议翻译与参数构造
-pnpm vitest run tests/unit/agent/omp-rpc.test.ts tests/unit/agent/omp-args.test.ts
+pnpm vitest run tests/unit/agent/omp-rpc.test.ts tests/unit/agent/omp-args.test.ts tests/unit/agent/omp-images.test.ts
 
 # 假 OMP 进程：ready、prompt 响应、文本增量、工具、agent_end、错误、EOF
 pnpm vitest run tests/process/omp-adapter.test.ts

@@ -13,6 +13,7 @@ import type {
   AgentRunOptions,
 } from '../types';
 import { buildOmpArgs } from './args';
+import { loadOmpImages } from './images';
 import {
   hostToolCall,
   hostToolErrorFrame,
@@ -146,6 +147,7 @@ export class OmpAdapter implements AgentAdapter {
       events: createEventStream({
         child,
         prompt,
+        images: opts.images,
         translator,
         stderrChunks,
         getError: () => runtimeError,
@@ -180,6 +182,7 @@ export class OmpAdapter implements AgentAdapter {
 interface EventStreamInput {
   child: OmpChild;
   prompt: string;
+  images?: readonly string[];
   translator: OmpJsonlTranslator;
   stderrChunks: Buffer[];
   getError: () => Error | null;
@@ -210,8 +213,14 @@ async function* createEventStream(input: EventStreamInput): AsyncGenerator<Agent
         if (sawReady) continue;
         sawReady = true;
         try {
+          const images = await loadOmpImages(input.images);
           writeFrameOrThrow(child, { id: STATE_ID, type: 'get_state' });
-          writeFrameOrThrow(child, { id: PROMPT_ID, type: 'prompt', message: prompt });
+          writeFrameOrThrow(child, {
+            id: PROMPT_ID,
+            type: 'prompt',
+            message: prompt,
+            ...(images.length > 0 ? { images } : {}),
+          });
           promptSent = true;
         } catch (err) {
           yield* translator.fail(`failed to start omp prompt: ${errorText(err)}`);
