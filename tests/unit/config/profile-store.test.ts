@@ -248,6 +248,35 @@ describe('profile store canonical serialization', () => {
     });
   });
 
+  it('keeps the omp block across a load/save round trip', async () => {
+    const root = await tmpRoot();
+    const configPath = join(root, 'config.json');
+    const profile = createDefaultProfileConfig({
+      agentKind: 'omp',
+      accounts: { app },
+      omp: {
+        binaryPath: '/usr/local/bin/omp',
+        model: 'opencode-go/deepseek-v4.1-flash',
+        thinking: 'max',
+      },
+    });
+
+    await saveRootConfig(createRootConfig('omp', profile), configPath);
+
+    const loaded = await loadRootConfig(configPath);
+    expect(loaded?.profiles.omp?.omp).toEqual({
+      binaryPath: '/usr/local/bin/omp',
+      model: 'opencode-go/deepseek-v4.1-flash',
+      thinking: 'max',
+    });
+
+    // Saving what we just loaded must not drop it: the profile has to stay
+    // loadable, or the bridge can never start a second time.
+    await saveRootConfig(loaded as RootConfig, configPath);
+    const reloaded = await loadRootConfig(configPath);
+    expect(reloaded?.profiles.omp?.omp).toMatchObject({ binaryPath: '/usr/local/bin/omp' });
+  });
+
   it('marks newly created roots as already evaluated for permission default migration', () => {
     const profile = createDefaultProfileConfig({
       agentKind: 'claude',
